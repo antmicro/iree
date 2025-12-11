@@ -24,7 +24,7 @@ class CPUClientInstance final : public ClientInstance {
   iree_status_t InitializeDeps();
 
   // Instance scoped options.
-  bool single_threaded_debug_ = false;
+  bool single_threaded_debug_ = true;
   iree_task_topology_t task_topology_options_;
 
   // Deps.

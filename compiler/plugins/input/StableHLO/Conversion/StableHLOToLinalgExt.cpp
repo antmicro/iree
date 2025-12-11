@@ -247,8 +247,6 @@ struct ScatterOpConversion final
   LogicalResult
   matchAndRewrite(mlir::stablehlo::ScatterOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    if (!hasCanonicalDimensionNumbers(op))
-      return failure();
     if (llvm::size(op.getInputs()) != 1)
       return op.emitError("NYI variadic operands scatter");
     if (llvm::size(op.getUpdates()) != 1)
@@ -260,8 +258,39 @@ struct ScatterOpConversion final
     Value indices = adaptor.getScatterIndices();
     Value updates = adaptor.getUpdates().front();
 
-    auto originalType = dyn_cast<ShapedType>(original.getType());
+    Location loc = op.getLoc();
+    auto originalType = dyn_cast<RankedTensorType>(original.getType());
+    auto indicesType = dyn_cast<RankedTensorType>(indices.getType());
+    auto updateType = dyn_cast<RankedTensorType>(updates.getType());
 
+    // special case handling
+    if (originalType.getRank() > 1 && indicesType.getRank() == 1 &&
+        updateType.getRank() == originalType.getRank()) {
+      SmallVector<OpFoldResult, 4> sizes;
+      for (int64_t size : updateType.getShape()) {
+        sizes.push_back(rewriter.getIndexAttr(size));
+      }
+
+      Value zero = mlir::arith::ConstantIndexOp::create(rewriter, loc, 0);
+      Value extracted =
+          mlir::tensor::ExtractOp::create(rewriter, loc, indices, zero);
+      extracted = mlir::arith::IndexCastOp::create(
+          rewriter, loc, rewriter.getIndexType(), extracted);
+      SmallVector<OpFoldResult, 4> offsets = {zero, extracted};
+      for (int i = 0; i < originalType.getRank() - 2; i++) {
+        offsets.push_back(zero);
+      }
+
+      int64_t rank = originalType.getRank();
+      SmallVector<OpFoldResult, 4> strides(rank, rewriter.getI64IntegerAttr(1));
+      rewriter.replaceOpWithNewOp<mlir::tensor::InsertSliceOp>(
+          op, updates, original, offsets, sizes, strides);
+
+      return success();
+    }
+
+    if (!hasCanonicalDimensionNumbers(op))
+      return failure();
     llvm::SmallVector<int64_t> scatterDimMap;
     for (auto dim :
          op.getScatterDimensionNumbers().getScatterDimsToOperandDims()) {
