@@ -991,7 +991,7 @@ iree_status_t DeviceInstance::TransposeBroadcastDeviceBuffer(
     EventInstance** out_done_with_host_buffer_event,
     BufferInstance** out_buffer) {
   if (num_dims > kMaxDims) {
-    auto ret = iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
+    return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
                                 "number of dimensions exceeded max supported");
   }
 
@@ -1049,7 +1049,7 @@ iree_status_t DeviceInstance::TransposeBroadcastDeviceBuffer(
       input_ty.c_str(), transpose_ty.c_str(), output_ty.c_str(),
       perms_str.c_str(), broadcast_str.c_str());
   if (program_len > sizeof(transpose_program)) {
-    auto ret = iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
+    return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
                                 "program size exceeded limit");
   }
 

@@ -29,12 +29,14 @@ cc_library(
     deps = [
         ":compiler",
         ":stubs",
+        ":debugging",
         "//integrations/pjrt/third_party/pjrt_c_api",
         "//runtime/src/iree/base:base",
         "//runtime/src/iree/hal:hal",
         "//runtime/src/iree/modules/hal:hal",
         "//runtime/src/iree/vm:vm",
         "//runtime/src/iree/vm/bytecode:module",
+        "//integrations/pjrt/third_party/pjrt_c_api:compile_options_cc_proto",
     ],
 )
 
@@ -82,5 +84,11 @@ cc_library(
         ":common",
         ":debugging",
         "//runtime/src/iree/base/internal:path",
+        "//runtime/src/iree/base:base",
+        "//integrations/pjrt/third_party/pjrt_c_api",
+        "//compiler/bindings/c:headers",
+        "//compiler/bindings/c:loader",
+        "//integrations/pjrt/src/iree_pjrt/partitioner_api:loader",
+        "//integrations/pjrt/src/iree_pjrt/partitioner_api:partitioner_api",
     ],
 )
