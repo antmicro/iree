@@ -643,3 +643,48 @@ func.func @prefix(%arg0: tensor<7x5xi32>, %arg1: tensor<i32>) -> tensor<7x5xi32>
 // CHECK:         iree_linalg_ext.yield %[[ADD]]
 // CHECK:       } -> tensor<7x5xi32>, tensor<7xi32>
 // CHECK:       return %[[SCAN]]#0 : tensor<7x5xi32>
+
+
+// CHECK-LABEL: @scatter
+// CHECK:         %[[ARG0:[a-zA-Z0-9]+]]
+// CHECK:         %[[ARG1:[a-zA-Z0-9]+]]
+// CHECK:         %[[ARG2:[a-zA-Z0-9]+]]
+func.func @scatter(%arg0: tensor<1x262144xbf16>, %arg1: tensor<2x1xi32>, %arg2: tensor<2x1xbf16>) -> tensor<1x262144xbf16> {
+  // CHECK-NOT: stablehlo.scatter
+  %ans = "stablehlo.scatter"(%arg0, %arg1, %arg2) ({
+      ^bb0(%arg375: tensor<bf16>, %arg376: tensor<bf16>):
+        "stablehlo.return"(%arg376) : (tensor<bf16>) -> ()
+      })
+      {
+        indices_are_sorted = false,
+        scatter_dimension_numbers = #stablehlo.scatter<
+          update_window_dims = [1],
+          inserted_window_dims = [1],
+          scatter_dims_to_operand_dims = [1],
+          index_vector_dim = 1
+        >,
+        unique_indices = false
+      }
+      : (tensor<1x262144xbf16>, tensor<2x1xi32>, tensor<2x1xbf16>) -> tensor<1x262144xbf16>
+  return %ans : tensor<1x262144xbf16>
+}
+// CHECK:    %[[C0:.+]] = arith.constant 0 : index
+// CHECK:    %[[C1:.+]] = arith.constant 1 : index
+
+
+
+// -----
+
+// CHECK-LABEL: @scatter2
+// CHECK:         %[[ARG0:[a-zA-Z0-9]+]]
+// CHECK:         %[[ARG1:[a-zA-Z0-9]+]]
+// CHECK:         %[[ARG2:[a-zA-Z0-9]+]]
+func.func @scatter2(%arg0: tensor<1x2048xi32>, %arg1: tensor<1x1xi32>, %arg2: tensor<1x1xi32>) -> tensor<1x2048xi32> {
+  // CHECK-NOT: stablehlo.scatter
+  %ans = "stablehlo.scatter"(%arg0, %arg1, %arg2) <{indices_are_sorted = true, scatter_dimension_numbers = #stablehlo.scatter<update_window_dims = [1], inserted_window_dims = [1], scatter_dims_to_operand_dims = [1], index_vector_dim = 1>, unique_indices = true}> ({
+  ^bb0(%arg369: tensor<i32>, %arg370: tensor<i32>):
+    "stablehlo.return"(%arg370) : (tensor<i32>) -> ()
+  }) : (tensor<1x2048xi32>, tensor<1x1xi32>, tensor<1x1xi32>) -> tensor<1x2048xi32>
+  return %ans : tensor<1x2048xi32>
+}
+
