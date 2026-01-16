@@ -263,6 +263,50 @@ struct ScatterOpConversion final
     auto indicesType = dyn_cast<RankedTensorType>(indices.getType());
     auto updateType = dyn_cast<RankedTensorType>(updates.getType());
 
+    auto dimNumbers = op.getScatterDimensionNumbers();
+    auto updateDims = dimNumbers.getUpdateWindowDims();
+
+    if (originalType.getRank() == 2 && //
+        originalType.getShape().front() == 1 &&
+        updateType.getShape().front() == 1 &&
+        indicesType.getShape().front() == 1 && //
+        updateDims.size() == 1 &&              //
+        updateDims.front() == 1 &&
+        dimNumbers.getInsertedWindowDims().size() == 1 &&
+        dimNumbers.getInsertedWindowDims().front() == 1 &&
+        dimNumbers.getInputBatchingDims().empty() &&
+        dimNumbers.getScatterIndicesBatchingDims().empty() &&
+        dimNumbers.getScatterDimsToOperandDims().size() == 1 &&
+        dimNumbers.getScatterDimsToOperandDims().front() == 1) {
+
+      auto newIndices = mlir::tensor::CollapseShapeOp::create(
+          rewriter, loc, op.getScatterIndices(),
+          mlir::ArrayRef<mlir::ReassociationIndices>{{0, 1}});
+
+      Value zero = mlir::arith::ConstantIndexOp::create(rewriter, loc, 0);
+      Value newIndices0 =
+          mlir::tensor::ExtractOp::create(rewriter, loc, newIndices, zero);
+
+      auto newUpdates = mlir::tensor::CollapseShapeOp::create(
+          rewriter, loc, updates,
+          mlir::ArrayRef<mlir::ReassociationIndices>{{0, 1}});
+
+      SmallVector<OpFoldResult, 4> sizes;
+      for (int64_t size : updateType.getShape()) {
+        sizes.push_back(rewriter.getIndexAttr(size));
+      }
+
+      newIndices0 = mlir::arith::IndexCastOp::create(
+          rewriter, loc, rewriter.getIndexType(), newIndices0);
+      SmallVector<OpFoldResult, 4> offsets = {zero, newIndices0};
+
+      int64_t rank = originalType.getRank();
+      SmallVector<OpFoldResult, 4> strides(rank, rewriter.getI64IntegerAttr(1));
+      rewriter.replaceOpWithNewOp<mlir::tensor::InsertSliceOp>(
+          op, newUpdates, original, offsets, sizes, strides);
+
+      return success();
+    }
     // special case handling
     if (originalType.getRank() > 1 && indicesType.getRank() == 1 &&
         updateType.getRank() == originalType.getRank()) {
