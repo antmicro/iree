@@ -247,8 +247,6 @@ struct ScatterOpConversion final
   LogicalResult
   matchAndRewrite(mlir::stablehlo::ScatterOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    if (!hasCanonicalDimensionNumbers(op))
-      return failure();
     if (llvm::size(op.getInputs()) != 1)
       return op.emitError("NYI variadic operands scatter");
     if (llvm::size(op.getUpdates()) != 1)
@@ -260,7 +258,83 @@ struct ScatterOpConversion final
     Value indices = adaptor.getScatterIndices();
     Value updates = adaptor.getUpdates().front();
 
+    Location loc = op.getLoc();
     auto originalType = dyn_cast<ShapedType>(original.getType());
+    auto indicesType = dyn_cast<RankedTensorType>(indices.getType());
+    auto updateType = dyn_cast<RankedTensorType>(updates.getType());
+
+    auto dimNumbers = op.getScatterDimensionNumbers();
+    auto updateDims = dimNumbers.getUpdateWindowDims();
+
+    if (originalType.getRank() == 2 && //
+        originalType.getShape().front() == 1 &&
+        updateType.getShape().front() == 1 &&
+        indicesType.getShape().front() == 1 && //
+        updateDims.size() == 1 &&              //
+        updateDims.front() == 1 &&
+        dimNumbers.getInsertedWindowDims().size() == 1 &&
+        dimNumbers.getInsertedWindowDims().front() == 1 &&
+        dimNumbers.getInputBatchingDims().empty() &&
+        dimNumbers.getScatterIndicesBatchingDims().empty() &&
+        dimNumbers.getScatterDimsToOperandDims().size() == 1 &&
+        dimNumbers.getScatterDimsToOperandDims().front() == 1) {
+
+      auto newIndices = mlir::tensor::CollapseShapeOp::create(
+          rewriter, loc, op.getScatterIndices(),
+          mlir::ArrayRef<mlir::ReassociationIndices>{{0, 1}});
+
+      Value zero = mlir::arith::ConstantIndexOp::create(rewriter, loc, 0);
+      Value newIndices0 =
+          mlir::tensor::ExtractOp::create(rewriter, loc, newIndices, zero);
+
+      auto newUpdates = mlir::tensor::CollapseShapeOp::create(
+          rewriter, loc, updates,
+          mlir::ArrayRef<mlir::ReassociationIndices>{{0, 1}});
+
+      SmallVector<OpFoldResult, 4> sizes;
+      for (int64_t size : updateType.getShape()) {
+        sizes.push_back(rewriter.getIndexAttr(size));
+      }
+
+      newIndices0 = mlir::arith::IndexCastOp::create(
+          rewriter, loc, rewriter.getIndexType(), newIndices0);
+      SmallVector<OpFoldResult, 4> offsets = {zero, newIndices0};
+
+      int64_t rank = originalType.getRank();
+      SmallVector<OpFoldResult, 4> strides(rank, rewriter.getI64IntegerAttr(1));
+      rewriter.replaceOpWithNewOp<mlir::tensor::InsertSliceOp>(
+          op, newUpdates, original, offsets, sizes, strides);
+
+      return success();
+    }
+    // special case handling
+    if (originalType.getRank() > 1 && indicesType.getRank() == 1 &&
+        updateType.getRank() == originalType.getRank()) {
+      SmallVector<OpFoldResult, 4> sizes;
+      for (int64_t size : updateType.getShape()) {
+        sizes.push_back(rewriter.getIndexAttr(size));
+      }
+
+      Value zero = mlir::arith::ConstantIndexOp::create(rewriter, loc, 0);
+      Value extracted =
+          mlir::tensor::ExtractOp::create(rewriter, loc, indices, zero);
+      extracted = mlir::arith::IndexCastOp::create(
+          rewriter, loc, rewriter.getIndexType(), extracted);
+      SmallVector<OpFoldResult, 4> offsets = {zero, extracted};
+      for (int i = 0; i < originalType.getRank() - 2; i++) {
+        offsets.push_back(zero);
+      }
+
+      int64_t rank = originalType.getRank();
+      SmallVector<OpFoldResult, 4> strides(rank, rewriter.getI64IntegerAttr(1));
+      rewriter.replaceOpWithNewOp<mlir::tensor::InsertSliceOp>(
+          op, updates, original, offsets, sizes, strides);
+
+      return success();
+    }
+
+    if (!hasCanonicalDimensionNumbers(op))
+      return failure();
 
     llvm::SmallVector<int64_t> scatterDimMap;
     for (auto dim :
