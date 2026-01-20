@@ -307,7 +307,73 @@ struct ScatterOpConversion final
 
       return success();
     }
-    // special case handling
+    if (originalType.getRank() == 2 && //
+        originalType.getShape().front() == 1 &&
+        updateType.getShape().front() == 2 &&
+        indicesType.getShape().front() == 2 && //
+        updateDims.size() == 1 &&              //
+        updateDims.front() == 1 &&
+        dimNumbers.getInsertedWindowDims().size() == 1 &&
+        dimNumbers.getInsertedWindowDims().front() == 1 &&
+        dimNumbers.getInputBatchingDims().empty() &&
+        dimNumbers.getScatterIndicesBatchingDims().empty() &&
+        dimNumbers.getScatterDimsToOperandDims().size() == 1 &&
+        dimNumbers.getScatterDimsToOperandDims().front() == 1) {
+
+      Value zero = mlir::arith::ConstantIndexOp::create(rewriter, loc, 0);
+      Value one = mlir::arith::ConstantIndexOp::create(rewriter, loc, 1);
+
+      auto newIndices = mlir::tensor::CollapseShapeOp::create(
+          rewriter, loc, op.getScatterIndices(),
+          mlir::ArrayRef<mlir::ReassociationIndices>{{0, 1}});
+
+      Value newIndices0 =
+          mlir::tensor::ExtractOp::create(rewriter, loc, newIndices, zero);
+      newIndices0 = mlir::arith::IndexCastOp::create(
+          rewriter, loc, rewriter.getIndexType(), newIndices0);
+      Value newIndices1 =
+          mlir::tensor::ExtractOp::create(rewriter, loc, newIndices, one);
+      newIndices1 = mlir::arith::IndexCastOp::create(
+          rewriter, loc, rewriter.getIndexType(), newIndices1);
+
+      SmallVector<int64_t> vShape = {1, 1};
+      SmallVector<OpFoldResult> vSizes;
+      for (auto v : vShape) {
+        vSizes.push_back(b.getIndexAttr(v));
+      }
+
+      auto sliceTy = RankedTensorType::get(vShape, updateType.getElementType());
+      SmallVector<OpFoldResult> vOffsets0(updateType.getRank(),
+                                          b.getIndexAttr(0));
+      SmallVector<OpFoldResult> vStrides(updateType.getRank(),
+                                         b.getIndexAttr(1));
+      auto newUpdates0 = mlir::tensor::ExtractSliceOp::create(
+          rewriter, loc, sliceTy, updates, vOffsets0, vSizes, vStrides);
+      SmallVector<OpFoldResult> vOffsets1(updateType.getRank(),
+                                          b.getIndexAttr(0));
+      vOffsets1[0] = b.getIndexAttr(1);
+      auto newUpdates1 = mlir::tensor::ExtractSliceOp::create(
+          rewriter, loc, sliceTy, updates, vOffsets1, vSizes, vStrides);
+
+      SmallVector<OpFoldResult, 4> offsets0 = {zero, newIndices0};
+      SmallVector<OpFoldResult, 4> offsets1 = {zero, newIndices1};
+      for (int i = 0; i < originalType.getRank() - 2; i++) {
+        offsets0.push_back(zero);
+        offsets1.push_back(zero);
+      }
+
+      int64_t rank = originalType.getRank();
+      SmallVector<OpFoldResult, 4> sizes = {b.getIndexAttr(1),
+                                            b.getIndexAttr(1)};
+      SmallVector<OpFoldResult, 4> strides(rank, rewriter.getI64IntegerAttr(1));
+      Value slice = mlir::tensor::InsertSliceOp::create(
+          b, newUpdates0, original, offsets0, sizes, strides);
+      rewriter.replaceOpWithNewOp<mlir::tensor::InsertSliceOp>(
+          op, newUpdates1, slice, offsets1, sizes, strides);
+
+      return success();
+    }
+
     if (originalType.getRank() > 1 && indicesType.getRank() == 1 &&
         updateType.getRank() == originalType.getRank()) {
       SmallVector<OpFoldResult, 4> sizes;
